@@ -1,6 +1,9 @@
 // Mongoose models
 const Project = require("../models/Project");
 const Client = require("../models/Client");
+const User = require("../models/User");
+const bcrypt = require('bcrypt')
+const jsonwebtoken = require("jsonwebtoken")
 
 const {
   GraphQLObjectType,
@@ -12,6 +15,19 @@ const {
   GraphQLEnumType,
 } = require("graphql");
 const { default: mongoose } = require("mongoose");
+
+// User type
+const UserType = new GraphQLObjectType({
+  name: "User",
+  fields: () => ({
+    id: { type: GraphQLID },
+    username: { type: GraphQLString },
+    email: { type: GraphQLString },
+    createdAt: { type: GraphQLString },
+    password: { type: GraphQLString },
+    token: { type: GraphQLString }
+  })
+})
 
 // Client type
 const ClientType = new GraphQLObjectType({
@@ -44,6 +60,32 @@ const ProjectType = new GraphQLObjectType({
 const RootQuery = new GraphQLObjectType({
   name: "RootQueryType",
   fields: {
+    loginUser: {
+      type: UserType,
+      args: { email: { type: GraphQLString }, password: { type: GraphQLString } },
+      async resolve(parent, args) {
+        const user = await User.findOne({ email: args.email })
+        if (!user) throw `No user with email ${args.email} found.`
+
+        const valid = await bcrypt.compare(args.password, user.password)
+        if (!valid) throw 'Incorrect password'
+
+        return {
+          username: user.username,
+          email: user.email,
+          createdAt: user.createdAt,
+          token: jsonwebtoken.sign({
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            createdAt: user.createdAt
+          },
+            process.env.JWT_SECRET,
+            { expiresIn: '1d' }
+          )
+        }
+      }
+    },
     projects: {
       type: new GraphQLList(ProjectType),
       resolve(parent, args) {
@@ -76,6 +118,38 @@ const RootQuery = new GraphQLObjectType({
 const mutation = new GraphQLObjectType({
   name: "Mutations",
   fields: {
+    registerUser: {
+      type: UserType,
+      args: {
+        username: { type: GraphQLNonNull(GraphQLString) },
+        email: { type: GraphQLNonNull(GraphQLString) },
+        password: { type: GraphQLNonNull(GraphQLString) },
+      },
+      async resolve(parent, args) {
+        const user = new User({
+          username: args.username,
+          email: args.email,
+          password: await bcrypt.hash(args.password, 10),
+          createdAt: new Date().getTime(),
+        })
+        user.save()
+        return {
+          token: jsonwebtoken.sign({
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            createdAt: user.createdAt
+          },
+            process.env.JWT_SECRET,
+            { expiresIn: '1d' }
+          ),
+          username: user.username,
+          email: user.email,
+          createdAt: user.createdAt,
+          id: user.id
+        } 
+      }
+    },
     // add client
     addClient: {
       type: ClientType,
